@@ -69,7 +69,7 @@ Compose crée tous les réseaux au démarrage : il n'y a rien à préparer. Un s
 | `econoris-app-net` | Non | Traefik, application web | Requêtes vers l'application web |
 | `econoris-vitrine-net` | Non | Traefik, vitrine | Requêtes vers la vitrine |
 | `econoris-database-net` | Non | API, base, migrations | Accès à la base |
-| `econoris-api-egress-net` | Oui | API | Envoi des mails, appels à Floraccess |
+| `econoris-api-egress-net` | Oui | API | Appels à Floraccess |
 
 Ce que cela garantit :
 
@@ -91,9 +91,7 @@ econoris-wrapper/
 │   ├── database/
 │   │   ├── .env
 │   │   └── secrets/              ← mot de passe de la base, connexion des migrations
-│   ├── api/
-│   │   ├── .env
-│   │   └── secrets/              ← mot de passe du compte mail
+│   ├── api/.env
 │   └── app/.env
 ├── backups/                      ← sauvegardes chiffrées de la base (jamais versionnées)
 ├── config/                       ← configuration de l'application web pour l'essai local
@@ -136,8 +134,6 @@ Les fichiers de `secrets/` sont lisibles par tous sur la machine, parce que chaq
 3. Relire `env/`, et remplir à la main :
 
     - `LETSENCRYPT_EMAIL` dans `env/proxy/.env` ;
-    - `MAIL_USERNAME` dans `env/api/.env` ;
-    - le mot de passe du compte mail, seul dans le fichier `env/api/secrets/mail_password` ;
     - la clé publique de sauvegarde, seule sur sa ligne dans le fichier `env/backup-recipients.txt`.
 
 4. **Uniquement pour reprendre les données d'une ancienne installation** : suivre [Reprendre une ancienne sauvegarde](#reprendre-une-ancienne-sauvegarde). À faire avant l'étape suivante.
@@ -206,7 +202,7 @@ C'est tout, et il est inutile de faire un `git pull` : Compose récupère lui-m�
 - **Attendre la fin de la CI après un merge sur `main`.** Le `docker-compose.yml` est disponible tout de suite, l'image seulement à la fin de la CI.
 - **Tout ce qui arrive sur `main` part au prochain déploiement**, y compris si la CI a échoué après le merge : `main` est alors en avance sur la dernière release.
 
-Si la base est recréée par une mise à jour, l'API redémarre avec elle : elle ne rétablit pas seule sa connexion.
+Si la base redémarre ou est recréée par une mise à jour, l'API rétablit seule sa connexion : il est inutile de la redémarrer.
 
 ## Une release qui demande une nouvelle variable
 

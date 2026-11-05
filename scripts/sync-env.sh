@@ -13,9 +13,9 @@ readonly GITHUB_FILES_URL="https://raw.githubusercontent.com/FloRobart"
 # Same branch as the includes of docker-compose.yml
 readonly RELEASE_BRANCH="main"
 
-readonly APP_PUBLIC_URL="https://econoris.florobart.fr"
-readonly API_PUBLIC_URL="https://econoris-server.florobart.fr"
-readonly AUTH_PUBLIC_URL="https://floraccess-server.florobart.fr"
+readonly APP_PUBLIC_URL="https://app.econoris.fr"
+readonly API_PUBLIC_URL="https://api.econoris.fr"
+readonly AUTH_PUBLIC_URL="https://api.floraccess.florobart.fr"
 
 project_directory="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 readonly project_directory
@@ -49,10 +49,6 @@ configure_api() {
     set_env_value "${env_file}" BASE_URL "${API_PUBLIC_URL}"
     set_env_value "${env_file}" AUTH_APP_URL "${AUTH_PUBLIC_URL}"
     set_env_value "${env_file}" CORS_ALLOWED_ORIGINS "${APP_PUBLIC_URL}"
-
-    write_secret_file "${API_MAIL_PASSWORD_FILE}" ""
-
-    echo "To fill in by hand: MAIL_USERNAME in ${env_file}, and the password in ${API_MAIL_PASSWORD_FILE}"
 }
 
 

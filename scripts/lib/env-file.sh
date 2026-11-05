@@ -5,7 +5,6 @@
 readonly DATABASE_ENV_FILE="env/database/.env"
 readonly DATABASE_PASSWORD_FILE="env/database/secrets/db_password"
 readonly MIGRATIONS_ENV_FILE="env/database/secrets/migrations.env"
-readonly API_MAIL_PASSWORD_FILE="env/api/secrets/mail_password"
 readonly BACKUP_RECIPIENTS_FILE="env/backup-recipients.txt"
 readonly BACKUP_ENCRYPTION_REQUIREMENT="backups need age to be installed and an age public key in ${BACKUP_RECIPIENTS_FILE}"
 

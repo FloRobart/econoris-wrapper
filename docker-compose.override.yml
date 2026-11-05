@@ -15,10 +15,10 @@ services:
       econoris-migrate:
         condition: service_completed_successfully
 
-      # The API keeps a single connection and never restores it: it must restart with the database
+      # The API checks the database when it starts. After a restart of the database,
+      # its pool of connections reconnects by itself: the API does not need to restart with it.
       econoris-database:
         condition: service_healthy
-        restart: true
 
 secrets:
   # The API connects with the password of the database: a single file to keep up to date
