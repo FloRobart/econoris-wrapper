@@ -1,0 +1,26 @@
+# What links the repositories together: no repository can declare it in its own
+# docker-compose.yml, which must stay valid without the others.
+
+services:
+  traefik:
+    # One network per exposed service: Traefik reaches each of them, but they cannot reach each other
+    networks:
+      - econoris-api-net
+      - econoris-app-net
+      - econoris-vitrine-net
+
+  econoris-api:
+    depends_on:
+      # A failed migration keeps the API from starting on an outdated schema
+      econoris-migrate:
+        condition: service_completed_successfully
+
+      # The API keeps a single connection and never restores it: it must restart with the database
+      econoris-database:
+        condition: service_healthy
+        restart: true
+
+secrets:
+  # The API connects with the password of the database: a single file to keep up to date
+  api_db_password:
+    file: ./env/database/secrets/db_password
