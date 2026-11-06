@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
-# Changes the database password in PostgreSQL and in env/database/secrets/, then restarts
-# the API, which reads it from there.
+# Changes the passwords of the database in PostgreSQL and in env/database/secrets/: the one of its
+# owner and the one of the role of the API. Then restarts the API, which reads its password from there.
 
 set -euo pipefail
 
@@ -15,18 +15,21 @@ print_usage() {
     cat <<EOF
 Usage: $(basename "$0") [-h] [new_password]
 
-Changes the database password in PostgreSQL and in env/database/secrets/,
-then restarts the API. The database must be running.
+Changes the passwords of the database in PostgreSQL and in env/database/secrets/:
+the one of its owner and the one of the role of the API (${API_DATABASE_ROLE}).
+Then restarts the API. The database must be running.
 
 Arguments:
-  new_password  The new password, with letters and digits only.
+  new_password  The new password of the owner, with letters and digits only.
                 Generated when omitted, which is recommended: a password given
-                here stays in the shell history.
+                here stays in the shell history. The password of the API is
+                always generated.
 
 Options:
   -h            Shows this help.
 
-The password is never displayed. It can be read in ${DATABASE_PASSWORD_FILE}.
+The passwords are never displayed. They can be read in ${DATABASE_PASSWORD_FILE}
+and ${API_DATABASE_PASSWORD_FILE}.
 EOF
 }
 
@@ -52,25 +55,28 @@ check_password_format() {
 
 # Once PostgreSQL has changed, a file that cannot be updated would break the API
 check_password_file() {
-    if [[ ! -w "${DATABASE_PASSWORD_FILE}" ]]; then
-        exit_with_error "${DATABASE_PASSWORD_FILE} does not exist or cannot be written."
+    local password_file="$1"
+
+    if [[ ! -w "${password_file}" ]]; then
+        exit_with_error "${password_file} does not exist or cannot be written."
     fi
 }
 
 
 # Sent through standard input: a command argument would be visible in the process list
 change_password_in_postgresql() {
-    local new_password="$1"
+    local role="$1"
+    local new_password="$2"
 
-    printf "ALTER USER CURRENT_USER PASSWORD '%s';\n" "${new_password}" \
+    printf "ALTER ROLE %s PASSWORD '%s';\n" "${role}" "${new_password}" \
         | docker compose exec -T econoris-database \
             sh -c 'psql --quiet -v ON_ERROR_STOP=1 -U "${POSTGRES_USER}" -d "${POSTGRES_DB}"'
 }
 
 
-# Only the API: PostgreSQL reads the file at its first start only, and an update of the other
-# services must go through deploy.sh. Forced, because Compose does not detect a change in a
-# mounted file. The migrations service reads the new password at the next deployment.
+# Only the API, which reads its password when it starts. PostgreSQL reads the file of the owner at
+# its first start only, and econoris-migrate and econoris-api-role read the new files at the next
+# deployment. Forced, because Compose does not detect a change in a mounted file.
 restart_api() {
     docker compose up --detach --wait --no-deps --force-recreate econoris-api
 }
@@ -93,17 +99,27 @@ if [[ "$#" -gt 1 ]]; then
     exit_with_error "too many arguments."
 fi
 
-password_to_apply="${1:-$(generate_database_password)}"
-readonly password_to_apply
+owner_password="${1:-$(generate_database_password)}"
+readonly owner_password
 
-check_password_format "${password_to_apply}"
+api_password="$(generate_database_password)"
+readonly api_password
+
+check_password_format "${owner_password}"
 
 cd "${project_directory}"
 
-check_password_file
-change_password_in_postgresql "${password_to_apply}"
-write_secret_file "${DATABASE_PASSWORD_FILE}" "${password_to_apply}"
-write_migrations_env
+check_password_file "${DATABASE_PASSWORD_FILE}"
+check_password_file "${API_DATABASE_PASSWORD_FILE}"
+
+# The API first: if its role does not exist yet, the script stops before changing anything.
+# Restarted at once, so that a failure on the owner cannot leave it with an outdated password.
+change_password_in_postgresql "${API_DATABASE_ROLE}" "${api_password}"
+write_secret_file "${API_DATABASE_PASSWORD_FILE}" "${api_password}"
 restart_api
 
-echo "Database password changed. It can be read in ${DATABASE_PASSWORD_FILE}."
+change_password_in_postgresql CURRENT_USER "${owner_password}"
+write_secret_file "${DATABASE_PASSWORD_FILE}" "${owner_password}"
+write_migrations_env
+
+echo "Database passwords changed. They can be read in ${DATABASE_PASSWORD_FILE} and ${API_DATABASE_PASSWORD_FILE}."

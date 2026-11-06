@@ -5,6 +5,11 @@
 readonly DATABASE_ENV_FILE="env/database/.env"
 readonly DATABASE_PASSWORD_FILE="env/database/secrets/db_password"
 readonly MIGRATIONS_ENV_FILE="env/database/secrets/migrations.env"
+
+# Created by econoris-api-role of econoris-database, which applies this password on every deployment
+readonly API_DATABASE_ROLE="econoris_api"
+readonly API_DATABASE_PASSWORD_FILE="env/database/secrets/api_db_password"
+
 readonly BACKUP_RECIPIENTS_FILE="env/backup-recipients.txt"
 readonly BACKUP_ENCRYPTION_REQUIREMENT="backups need age to be installed and an age public key in ${BACKUP_RECIPIENTS_FILE}"
 
@@ -26,7 +31,7 @@ read_env_value() {
 }
 
 
-# Letters and digits only: the password goes unescaped in a connection URL
+# Letters and digits only: the password goes unescaped in a connection URL and in SQL statements
 generate_database_password() {
     openssl rand -hex 32
 }

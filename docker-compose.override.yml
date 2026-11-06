@@ -10,9 +10,18 @@ services:
       - econoris-vitrine-net
 
   econoris-api:
+    environment:
+      # Its own role, created by econoris-api-role of econoris-database: it can only read and write
+      # the rows of the tables. Forced here, so that an older env/api/.env cannot keep the owner.
+      DB_USER: econoris_api
+
     depends_on:
       # A failed migration keeps the API from starting on an outdated schema
       econoris-migrate:
+        condition: service_completed_successfully
+
+      # The role of the API must exist, with the password of its secret, before the API connects
+      econoris-api-role:
         condition: service_completed_successfully
 
       # The API checks the database when it starts. After a restart of the database,
@@ -21,6 +30,6 @@ services:
         condition: service_healthy
 
 secrets:
-  # The API connects with the password of the database: a single file to keep up to date
+  # The password of the role of the API: econoris-api-role applies the same file in PostgreSQL
   api_db_password:
-    file: ./env/database/secrets/db_password
+    file: ./env/database/secrets/api_db_password

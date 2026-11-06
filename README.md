@@ -48,14 +48,15 @@ Le wrapper assemble trois sources :
 - **Tout passe par `include`, une fonction native de Docker Compose.** `docker-compose.yml` pointe vers le fichier de chaque dépôt sur GitHub. Compose le télécharge et le met en cache lui-même.
 - **`main` tient lieu de « dernière release »** : la CI publie une version à chaque merge sur `main`. Git n'a pas de référence vers « la dernière release », et Compose ne sait inclure que depuis une référence git.
 - **Chaque dépôt lit son propre dossier dans `env/`**, comme s'il tournait seul. Les noms de variables ne peuvent donc pas entrer en conflit.
-- **`docker-compose.override.yml` relie les dépôts** : il branche Traefik sur le réseau de chaque service exposé, donne à l'API le mot de passe de la base, et garantit que les migrations passent avant le démarrage de l'API.
+- **`docker-compose.override.yml` relie les dépôts** : il branche Traefik sur le réseau de chaque service exposé, donne à l'API son propre rôle dans la base, et garantit que les migrations et ce rôle sont prêts avant le démarrage de l'API.
+- **L'API n'utilise pas le propriétaire de la base.** Elle se connecte avec le rôle `econoris_api`, qui peut seulement lire et écrire les lignes des tables : une injection SQL ne pourrait ni modifier le schéma ni exécuter de code sur le serveur. Le service `econoris-api-role` d'`econoris-database` crée ce rôle et lui donne ses droits à chaque déploiement.
 
 Au lancement de `deploy.sh`, dans l'ordre :
 
 1. **Vérifie `env/`.** Il s'arrête si un `.env` vient d'être créé, si une release demande une nouvelle variable ou si les sauvegardes ne peuvent pas être chiffrées. Rien n'a encore été touché.
 2. **Télécharge les images.**
 3. **Sauvegarde et chiffre la base**, si elle tourne déjà.
-4. **Démarre tout dans l'ordre** : la base, les migrations manquantes, puis l'API. Traefik, l'application web et la vitrine démarrent en parallèle. Si une migration échoue, l'API n'est pas mise à jour et le script s'arrête en erreur.
+4. **Démarre tout dans l'ordre** : la base, les migrations manquantes, le rôle de l'API, puis l'API. Traefik, l'application web et la vitrine démarrent en parallèle. Si une migration échoue, l'API n'est pas mise à jour et le script s'arrête en erreur.
 5. **Recrée le conteneur web**, pour qu'il serve bien la configuration actuelle.
 
 # Réseaux
@@ -68,13 +69,13 @@ Compose crée tous les réseaux au démarrage : il n'y a rien à préparer. Un s
 | `econoris-api-net` | Non | Traefik, API | Requêtes vers l'API |
 | `econoris-app-net` | Non | Traefik, application web | Requêtes vers l'application web |
 | `econoris-vitrine-net` | Non | Traefik, vitrine | Requêtes vers la vitrine |
-| `econoris-database-net` | Non | API, base, migrations | Accès à la base |
+| `econoris-database-net` | Non | API, base, migrations, rôle de l'API | Accès à la base |
 | `econoris-api-egress-net` | Oui | API | Appels à Floraccess |
 
 Ce que cela garantit :
 
 - **Les services exposés ne peuvent pas se joindre entre eux.** Seul Traefik les atteint, et chacun avec son propre réseau.
-- **Seuls l'API et les migrations atteignent la base.** Traefik ne la voit pas.
+- **Seuls l'API, les migrations et le service qui crée le rôle de l'API atteignent la base.** Traefik ne la voit pas.
 - **La base, l'application web et la vitrine n'ont aucun accès à Internet.** Une image compromise ne peut rien envoyer dehors.
 - **Aucun conteneur n'a accès à l'API Docker.** Traefik lit ses routes dans `dynamic/routes.yml` d'`econoris-proxy`.
 
@@ -90,7 +91,7 @@ econoris-wrapper/
 │   ├── proxy/.env
 │   ├── database/
 │   │   ├── .env
-│   │   └── secrets/              ← mot de passe de la base, connexion des migrations
+│   │   └── secrets/              ← mots de passe de la base et de l'API, connexion des migrations
 │   ├── api/.env
 │   └── app/.env
 ├── backups/                      ← sauvegardes chiffrées de la base (jamais versionnées)
@@ -99,7 +100,7 @@ econoris-wrapper/
     ├── deploy.sh                 ← vérifie, sauvegarde, puis démarre ou met à jour
     ├── backup.sh                 ← sauvegarde et chiffre la base dans backups/
     ├── sync-env.sh               ← crée env/ et repère les variables manquantes
-    ├── rotate-database-password.sh ← change le mot de passe de la base
+    ├── rotate-database-password.sh ← change les mots de passe de la base et de l'API
     └── lib/                      ← fonctions partagées entre les scripts
 ```
 
@@ -125,7 +126,7 @@ Les fichiers de `secrets/` sont lisibles par tous sur la machine, parce que chaq
 
 1. Récupérer ce dépôt sur le serveur, puis se placer dans son dossier.
 
-2. Créer la configuration. Le mot de passe de la base est généré et les adresses publiques sont déjà remplies :
+2. Créer la configuration. Les mots de passe de la base et de l'API sont générés, et les adresses publiques sont déjà remplies :
 
     ```bash
     ./scripts/sync-env.sh
@@ -144,7 +145,7 @@ Les fichiers de `secrets/` sont lisibles par tous sur la machine, parce que chaq
     ./scripts/deploy.sh
     ```
 
-6. Vérifier que `econoris-migrate` et `traefik-certificates-init` sont `Exited (0)` et que les autres services sont `Up` :
+6. Vérifier que `econoris-migrate`, `econoris-api-role` et `traefik-certificates-init` sont `Exited (0)` et que les autres services sont `Up` :
 
     ```bash
     docker compose ps --all
@@ -160,7 +161,7 @@ Les fichiers de `secrets/` sont lisibles par tous sur la machine, parce que chaq
 
 Ne pas lancer `deploy.sh` avant la fin de ces étapes : il créerait les tables, et la sauvegarde entrerait en conflit avec elles.
 
-Dans `env/database/.env` et `env/api/.env`, `DB_USER` doit rester l'utilisateur de l'ancienne base (`postgres` par défaut).
+Dans `env/database/.env`, `DB_USER` doit rester l'utilisateur de l'ancienne base (`postgres` par défaut). L'API n'est pas concernée : elle se connecte toujours avec son propre rôle, `econoris_api`.
 
 1. Démarrer uniquement la base :
 
@@ -279,6 +280,8 @@ Sauvegarder (`deploy.sh` le fait déjà avant chaque mise à jour) :
 
 Les 30 dernières sauvegardes sont gardées dans `backups/` (`BACKUP_RETENTION_COUNT` pour changer ce nombre). Elles sont sur le même disque que la base : **il faut aussi les copier ailleurs** pour survivre à une panne du serveur. Comme elles sont chiffrées, l'endroit où tu les copies n'a pas besoin d'être de confiance.
 
+Les sauvegardes ne contiennent pas les droits des tables : ils nomment le rôle de l'API, qui n'existe pas encore dans une base vide, et la restauration échouerait. `econoris-api-role` les redonne au déploiement qui suit la restauration.
+
 ## Comment elles sont chiffrées
 
 Les sauvegardes sont chiffrées avec [age](https://age-encryption.org) dès leur création : le dump en clair n'est jamais écrit sur le disque. Le chiffrement utilise deux clés :
@@ -338,13 +341,13 @@ Il faut tester régulièrement cette restauration, en local : c'est la seule fa�
 
 # Changer le mot de passe de la base
 
-La base doit être démarrée. Le script génère un nouveau mot de passe, le change dans PostgreSQL et dans `env/database/secrets/`, puis redémarre l'API, qui est coupée quelques secondes.
+La base doit être démarrée. Le script change les deux mots de passe de la base, celui de son propriétaire et celui du rôle de l'API, dans PostgreSQL et dans `env/database/secrets/`. Il redémarre ensuite l'API, qui est coupée quelques secondes.
 
 ```bash
 ./scripts/rotate-database-password.sh
 ```
 
-Pour choisir le mot de passe (lettres et chiffres uniquement). Il reste alors dans l'historique du terminal :
+Pour choisir le mot de passe du propriétaire (lettres et chiffres uniquement). Il reste alors dans l'historique du terminal. Celui de l'API est toujours généré :
 
 ```bash
 ./scripts/rotate-database-password.sh <nouveau_mot_de_passe>
@@ -356,7 +359,7 @@ Pour afficher l'aide :
 ./scripts/rotate-database-password.sh -h
 ```
 
-Le mot de passe n'est jamais affiché : il se lit dans `env/database/secrets/db_password`. Ne pas le modifier à la main dans ce fichier, car PostgreSQL garderait l'ancien.
+Les mots de passe ne sont jamais affichés : ils se lisent dans `env/database/secrets/db_password` (propriétaire) et `env/database/secrets/api_db_password` (API). Ne pas les modifier à la main dans ces fichiers : PostgreSQL garderait l'ancien mot de passe du propriétaire, et l'API, qui ne relit pas le sien sans redémarrer, perdrait l'accès à la base au déploiement suivant.
 
 # Essayer en local
 

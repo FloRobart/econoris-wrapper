@@ -2,6 +2,7 @@
 # Keeps env/ in line with the .env.example of the latest release of each repository:
 #   - a missing .env is created from that example, with the production values below;
 #   - an existing .env is never modified, but a variable it lacks is reported;
+#   - a missing password of the role of the API is generated, also for an existing installation;
 #   - backups that could not be encrypted are reported.
 #
 # Exits with status 1 when something needs a look, so a deployment stops before it starts.
@@ -42,8 +43,23 @@ configure_database() {
 }
 
 
+# Generated once, then kept: econoris-api-role applies it in PostgreSQL on every deployment.
+# Nothing to fill in by hand, so its creation does not stop the deployment.
+ensure_api_database_password() {
+    if [[ -f "${API_DATABASE_PASSWORD_FILE}" ]]; then
+        return
+    fi
+
+    write_secret_file "${API_DATABASE_PASSWORD_FILE}" "$(generate_database_password)"
+    echo "Created: ${API_DATABASE_PASSWORD_FILE}"
+}
+
+
 configure_api() {
     local env_file="$1"
+
+    # Only for the clarity of the file: docker-compose.override.yml forces this role anyway
+    set_env_value "${env_file}" DB_USER "${API_DATABASE_ROLE}"
 
     set_env_value "${env_file}" APP_ENV prod
     set_env_value "${env_file}" BASE_URL "${API_PUBLIC_URL}"
@@ -115,6 +131,7 @@ sync_env_file database econoris-database
 sync_env_file api econoris-api
 sync_env_file app econoris-app
 
+ensure_api_database_password
 write_migrations_env
 
 # A deployment backs up the database: better to find out before anything is touched

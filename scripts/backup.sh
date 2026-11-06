@@ -47,8 +47,10 @@ mkdir -p "${backup_directory}"
 # A truncated dump must never pass for a valid backup
 trap 'rm -f -- "${backup_file}"' ERR
 
+# Without the privileges: they name the role of the API, which a new empty database does not have
+# yet, so the restoration would fail. econoris-api-role grants them again at the next deployment.
 docker compose --project-name "${COMPOSE_PROJECT}" exec -T econoris-database \
-    sh -c 'pg_dump -U "${POSTGRES_USER}" -d "${POSTGRES_DB}"' \
+    sh -c 'pg_dump --no-privileges -U "${POSTGRES_USER}" -d "${POSTGRES_DB}"' \
     | gzip \
     | age --encrypt --recipients-file "${BACKUP_RECIPIENTS_FILE}" \
     > "${backup_file}"
