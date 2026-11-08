@@ -31,14 +31,20 @@ trap 'rm -rf -- "${temporary_directory}"' EXIT
 needs_review=false
 
 
+# Receives the file being built: the message names the final one, the only one left to edit
 configure_proxy() {
-    local env_file="$1"
-
-    echo "To fill in by hand: LETSENCRYPT_EMAIL in ${env_file}"
+    echo "To fill in by hand: LETSENCRYPT_EMAIL in env/proxy/.env"
 }
 
 
 configure_database() {
+    # PostgreSQL only applies this password when its volume is created: a new one would not
+    # reach an existing database, and the old one, then lost, would be the only one that works.
+    if [[ -f "${DATABASE_PASSWORD_FILE}" ]]; then
+        echo "Kept: ${DATABASE_PASSWORD_FILE}"
+        return
+    fi
+
     write_secret_file "${DATABASE_PASSWORD_FILE}" "$(generate_database_password)"
 }
 
@@ -84,9 +90,15 @@ create_env_file() {
     local example_file="$2"
     local env_file="env/${env_name}/.env"
 
+    # Built aside, then moved in place: an interrupted run must not leave a .env holding the
+    # values of the example, which the next run would keep as it is.
+    # Same folder as the .env, so that mv only renames it and cannot be interrupted halfway.
+    local partial_env_file="${env_file}.partial"
+
     mkdir -p "env/${env_name}"
-    install -m 600 "${example_file}" "${env_file}"
-    "configure_${env_name}" "${env_file}"
+    install -m 600 "${example_file}" "${partial_env_file}"
+    "configure_${env_name}" "${partial_env_file}"
+    mv -- "${partial_env_file}" "${env_file}"
 
     echo "Created: ${env_file}"
     needs_review=true

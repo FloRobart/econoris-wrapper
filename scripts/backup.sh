@@ -1,6 +1,7 @@
 #!/usr/bin/env bash
-# Writes an encrypted, compressed dump of the running database to backups/, then removes the
-# oldest ones. Only a public key is on this server: it can write backups, but not read them.
+# Writes an encrypted, compressed dump of the database to a folder, then removes the oldest ones.
+# The database runs on this machine, or on a server reached through SSH: the dump is encrypted
+# there, and only a public key is on that machine. It can write backups, but not read them.
 
 set -euo pipefail
 
@@ -10,53 +11,58 @@ readonly BACKUP_RETENTION_COUNT="${BACKUP_RETENTION_COUNT:-30}"
 # GitHub, so a backup still works when GitHub is down
 readonly COMPOSE_PROJECT="${COMPOSE_PROJECT_NAME:-econoris}"
 
+# Without the privileges: they name the role of the API, which a new empty database does not have
+# yet, so the restoration would fail. econoris-api-role grants them again at the next deployment.
+# shellcheck disable=SC2016 # Expanded by the shell of the database container
+readonly PG_DUMP_COMMAND='pg_dump --no-privileges -U "${POSTGRES_USER}" -d "${POSTGRES_DB}"'
+
 project_directory="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 readonly project_directory
-readonly backup_directory="${project_directory}/backups"
-
-backup_file="${backup_directory}/econoris_$(date +%Y-%m-%d_%H-%M-%S).sql.gz.age"
-readonly backup_file
 
 # shellcheck source=lib/env-file.sh
 source "${project_directory}/scripts/lib/env-file.sh"
+# shellcheck source=lib/backup-helpers.sh
+source "${project_directory}/scripts/lib/backup-helpers.sh"
 
 
-remove_oldest_backups() {
-    find "${backup_directory}" -maxdepth 1 -name 'econoris_*.sql.gz.age' -printf '%f\n' \
-        | sort -r \
-        | tail -n +"$((BACKUP_RETENTION_COUNT + 1))" \
-        | while read -r outdated_backup; do
-            rm -f -- "${backup_directory}/${outdated_backup}"
-        done
+print_usage() {
+    cat <<EOF
+Utilisation : $(basename "$0") [-h] [-p port] [-o dossier] [source]
+
+À quoi sert ce script :
+  Sauvegarde la base d'Éconoris, la compresse et la chiffre avec la clé publique de
+  env/backup-recipients.txt. Les ${BACKUP_RETENTION_COUNT} dernières sauvegardes du dossier sont gardées
+  (BACKUP_RETENTION_COUNT pour changer ce nombre).
+
+Source : le dossier econoris-wrapper où tourne la base.
+  - Un chemin sur cette machine. Par défaut : ${project_directory}
+  - Ou [utilisateur@]serveur:chemin, pour passer par SSH. Le chemin est absolu, ou relatif
+    au dossier personnel. La sauvegarde est chiffrée sur le serveur : seule la version
+    chiffrée passe par SSH, et age n'est pas nécessaire sur cette machine.
+
+Options :
+  -p port      Port SSH. Par défaut, celui de ~/.ssh/config, sinon 22.
+  -o dossier   Où écrire la sauvegarde. Par défaut : ${project_directory}/backups
+  -h           Affiche cette aide.
+
+Exemples :
+  $(basename "$0")
+  $(basename "$0") -p 2222 -o ~/sauvegardes floris@econoris.fr:/srv/econoris-wrapper
+EOF
 }
 
 
-cd "${project_directory}"
+parse_backup_arguments "${project_directory}" "$@"
+require_backup_source
 
-# Without this check, the database would be dumped for nothing. A backup is never written
-# unencrypted, even as a fallback: it holds personal financial data.
-if ! can_encrypt_backups; then
-    echo "Error: ${BACKUP_ENCRYPTION_REQUIREMENT}" >&2
-    exit 1
-fi
+backup_file="${output_directory}/econoris_$(date +%Y-%m-%d_%H-%M-%S).sql.gz.age"
+readonly backup_file
 
-# Encryption protects the content: these permissions also keep the dates and sizes private
-umask 077
-mkdir -p "${backup_directory}"
+write_backup_from_source "${backup_file}" \
+    "docker compose --project-name ${COMPOSE_PROJECT@Q} exec -T econoris-database sh -c ${PG_DUMP_COMMAND@Q} \
+        | gzip \
+        | ${ENCRYPT_COMMAND}"
 
-# A truncated dump must never pass for a valid backup
-trap 'rm -f -- "${backup_file}"' ERR
-
-# Without the privileges: they name the role of the API, which a new empty database does not have
-# yet, so the restoration would fail. econoris-api-role grants them again at the next deployment.
-docker compose --project-name "${COMPOSE_PROJECT}" exec -T econoris-database \
-    sh -c 'pg_dump --no-privileges -U "${POSTGRES_USER}" -d "${POSTGRES_DB}"' \
-    | gzip \
-    | age --encrypt --recipients-file "${BACKUP_RECIPIENTS_FILE}" \
-    > "${backup_file}"
-
-trap - ERR
-
-remove_oldest_backups
+remove_oldest_backups "${output_directory}" 'econoris_*.sql.gz.age' "${BACKUP_RETENTION_COUNT}"
 
 echo "Backup written: ${backup_file}"
