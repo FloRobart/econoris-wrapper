@@ -55,7 +55,6 @@ can_encrypt_backups() {
     age --encrypt --recipients-file "${BACKUP_RECIPIENTS_FILE}" < /dev/null > /dev/null 2>&1
 }
 
-
 # Only made of other values, and written again on each run, so it can never drift from them
 write_migrations_env() {
     local database_user
