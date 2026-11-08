@@ -22,9 +22,11 @@ Il ne définit aucun service et ne contient aucune version. Chaque dépôt garde
 - [Revenir en arrière](#revenir-en-arrière)
 - [Si GitHub est injoignable](#si-github-est-injoignable)
 - [Sauvegarder et restaurer](#sauvegarder-et-restaurer)
+  - [Sauvegarder depuis ta machine](#sauvegarder-depuis-ta-machine)
   - [Comment elles sont chiffrées](#comment-elles-sont-chiffrées)
   - [Créer la clé de sauvegarde](#créer-la-clé-de-sauvegarde)
   - [Restaurer](#restaurer)
+  - [Sauvegarder et restaurer env/](#sauvegarder-et-restaurer-env)
 - [Changer le mot de passe de la base](#changer-le-mot-de-passe-de-la-base)
 - [Essayer en local](#essayer-en-local)
 - [Ce qu'un dépôt doit respecter](#ce-quun-dépôt-doit-respecter)
@@ -94,14 +96,15 @@ econoris-wrapper/
 │   │   └── secrets/              ← mots de passe de la base et de l'API, connexion des migrations
 │   ├── api/.env
 │   └── app/.env
-├── backups/                      ← sauvegardes chiffrées de la base (jamais versionnées)
+├── backups/                      ← sauvegardes chiffrées de la base et de env/ (jamais versionnées)
 ├── config/                       ← configuration de l'application web pour l'essai local
 └── scripts/
     ├── deploy.sh                 ← vérifie, sauvegarde, puis démarre ou met à jour
     ├── backup.sh                 ← sauvegarde et chiffre la base dans backups/
+    ├── backup-env.sh             ← sauvegarde et chiffre env/ dans backups/
     ├── sync-env.sh               ← crée env/ et repère les variables manquantes
     ├── rotate-database-password.sh ← change les mots de passe de la base et de l'API
-    └── lib/                      ← fonctions partagées entre les scripts
+    └── lib/                      ← fonctions partagées entre les scripts (env/, sauvegardes et SSH)
 ```
 
 ⚠️ **`env/app/.env` est servi à tous les visiteurs par nginx.** Ne jamais y mettre de secret.
@@ -280,6 +283,23 @@ Sauvegarder (`deploy.sh` le fait déjà avant chaque mise à jour) :
 
 Les 30 dernières sauvegardes sont gardées dans `backups/` (`BACKUP_RETENTION_COUNT` pour changer ce nombre). Elles sont sur le même disque que la base : **il faut aussi les copier ailleurs** pour survivre à une panne du serveur. Comme elles sont chiffrées, l'endroit où tu les copies n'a pas besoin d'être de confiance.
 
+## Sauvegarder depuis ta machine
+
+`backup.sh` et `backup-env.sh` peuvent aussi se lancer **depuis ta machine**, à travers SSH : la sauvegarde est écrite directement chez toi, ce qui en fait aussi la copie hors du serveur. Il suffit d'avoir ce dépôt sur ta machine, sans `env/` ni `age`.
+
+```bash
+./scripts/backup.sh -p 2222 -o ~/sauvegardes/econoris floris@econoris.fr:/srv/econoris-wrapper
+./scripts/backup-env.sh -p 2222 -o ~/sauvegardes/econoris floris@econoris.fr:/srv/econoris-wrapper
+```
+
+- **La source** est le dossier `econoris-wrapper` du serveur, écrit comme pour `scp` : `[utilisateur@]serveur:chemin`, avec un chemin absolu ou relatif au dossier personnel. Un chemin sans `serveur:` désigne un dossier de ta machine. Sans source, c'est le dossier du script, comme avant.
+- **`-p`** donne le port SSH. Sans lui, c'est celui de `~/.ssh/config`, sinon 22.
+- **`-o`** donne le dossier où écrire. Sans lui, c'est `backups/` à côté du script. Les 30 dernières sauvegardes de ce dossier sont gardées.
+- **Le chiffrement a lieu sur le serveur**, avec sa clé publique : seule la version chiffrée passe par SSH. Le serveur a besoin de `age` et de `env/backup-recipients.txt`, comme pour `deploy.sh`.
+- L'utilisateur SSH doit pouvoir lancer `docker` pour `backup.sh`, et lire `env/` pour `backup-env.sh`.
+
+`./scripts/backup.sh -h` détaille toutes les options.
+
 Les sauvegardes ne contiennent pas les droits des tables : ils nomment le rôle de l'API, qui n'existe pas encore dans une base vide, et la restauration échouerait. `econoris-api-role` les redonne au déploiement qui suit la restauration.
 
 ## Comment elles sont chiffrées
@@ -338,6 +358,29 @@ La restauration se lance **depuis ta machine**, où se trouve la clé privée : 
     ```
 
 Il faut tester régulièrement cette restauration, en local : c'est la seule façon de vérifier que la clé privée conservée est la bonne.
+
+## Sauvegarder et restaurer env/
+
+`env/` contient **la seule copie** des mots de passe de la base et de l'API. Les sauvegardes de la base ne les contiennent pas : sans `env/`, une base restaurée ne serait plus accessible. Il faut le sauvegarder après l'installation et après chaque changement, en particulier après [un changement de mot de passe](#changer-le-mot-de-passe-de-la-base) :
+
+```bash
+./scripts/backup-env.sh
+```
+
+L'archive est écrite dans `backups/` sous le nom `econoris-env_<date>.tar.gz.age`, avec **la même clé publique** que les sauvegardes de la base : quiconque a la clé privée peut déjà lire toutes les données, auxquelles ces mots de passe donnent seulement accès. Les 30 dernières sont gardées (`BACKUP_RETENTION_COUNT`). Comme pour la base, **il faut la copier hors du serveur**, ou la faire [depuis ta machine](#sauvegarder-depuis-ta-machine) avec les mêmes options que `backup.sh`.
+
+Pour la lire, sur ta machine :
+
+```bash
+mkdir env-restauré
+age --decrypt --identity econoris-backup.key <fichier>.tar.gz.age | tar --extract --gzip --file - --directory env-restauré
+```
+
+Pour la remettre sur le serveur, depuis ta machine. Les fichiers déjà présents dans `env/` ne sont **pas remplacés** : `tar` les signale, et il faut les supprimer d'abord pour les reprendre de l'archive :
+
+```bash
+age --decrypt --identity econoris-backup.key <fichier>.tar.gz.age | ssh <serveur> 'cd <dossier du wrapper> && tar --extract --gzip --file - --keep-old-files --preserve-permissions'
+```
 
 # Changer le mot de passe de la base
 
